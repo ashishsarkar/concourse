@@ -49,7 +49,7 @@ type Client interface {
 		runtime.ProcessSpec,
 		runtime.StartingEventDelegate,
 		lock.LockFactory,
-	) TaskResult
+	) (TaskResult, error)
 
 	RunPutStep(
 		context.Context,
@@ -63,7 +63,7 @@ type Client interface {
 		runtime.ProcessSpec,
 		runtime.StartingEventDelegate,
 		resource.Resource,
-	) PutResult
+	) (PutResult, error)
 
 	RunGetStep(
 		context.Context,
@@ -96,19 +96,20 @@ type client struct {
 type TaskResult struct {
 	Status       int
 	VolumeMounts []VolumeMount
-	Err          error
+	Failure       error
 }
 
 type PutResult struct {
 	Status        int
 	VersionResult runtime.VersionResult
-	Err           error
+	Failure       error
 }
 
 type GetResult struct {
 	Status        int
 	VersionResult runtime.VersionResult
 	GetArtifact   runtime.GetArtifact
+	Failure       error
 }
 
 func (result GetResult) ExitSuccessful() bool {
@@ -368,6 +369,7 @@ func (client *client) RunGetStep(
 		resourceCache,
 		lockName,
 	)
+
 	return getResult, err
 }
 
@@ -506,7 +508,7 @@ func (client *client) RunPutStep(
 	spec runtime.ProcessSpec,
 	eventDelegate runtime.StartingEventDelegate,
 	resource resource.Resource,
-) PutResult {
+) (PutResult, error) {
 
 	vr := runtime.VersionResult{}
 	err := client.wireInputsAndCaches(logger, &containerSpec)
