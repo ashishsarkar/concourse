@@ -515,7 +515,7 @@ func (b *build) Finish(status BuildStatus) error {
 			return err
 		}
 
-		err = updateLatestCompletedBuildForJob(tx, b.jobID)
+		err = b.updateLatestCompletedBuildForJob(tx)
 		if err != nil {
 			return err
 		}
@@ -1558,29 +1558,54 @@ func buildAbortChannel(buildID int) string {
 	return fmt.Sprintf("build_abort_%d", buildID)
 }
 
-func updateNextBuildForJob(tx Tx, jobID int) error {
-	_, err := tx.Exec(`
-		UPDATE jobs AS j
-		SET next_build_id = (
-			SELECT min(b.id)
-			FROM builds b
-			INNER JOIN jobs j ON j.id = b.job_id
-			WHERE b.job_id = $1
-			AND b.status IN ('pending', 'started')
-			AND (b.rerun_of IS NULL OR b.rerun_of = j.latest_completed_build_id)
-		)
-		WHERE j.id = $1
-	`, jobID)
+func (b *build) updateNextBuildForJob(tx Tx, jobID int) error {
+	var nextBuildID int
+	err := psql.Select("min(b.id)").
+		From("builds b").
+		JoinClause("INNER JOIN jobs j ON j.id = b.job_id").
+		Where(sq.Eq{"b.job_id": b.jobID}).
+		Where(sq.Expr(`b.status IN ('pending', 'started')`)).
+		Where(sq.Or{
+			sq.Eq{"b.rerun_of": nil},
+			sq.Expr("b.rerun_of = j.latest_completed_build_id"),
+		}).
+		RunWith(tx).
+		QueryRow().
+		Scan(&nextBuildID)
 	if err != nil {
 		return err
 	}
-	return nil
+	// _, err := tx.Exec(`
+	// 	UPDATE jobs AS j
+	// 	SET next_build_id = (
+	// 		SELECT min(b.id)
+	// 		FROM builds b
+	// 		INNER JOIN jobs j ON j.id = b.job_id
+	// 		WHERE b.job_id = $1
+	// 		AND b.status IN ('pending', 'started')
+	// 		AND (b.rerun_of IS NULL OR b.rerun_of = j.latest_completed_build_id)
+	// 	)
+	// 	WHERE j.id = $1
+	// `, jobID)
+	// if err != nil {
+	// 	return err
+	// }
+	job, found, err := b.job()
+	if err != nil {
+		return err
+	}
+
+	if !found {
+		return errors.New("job not found")
+	}
+
+	return job.UpdateNextBuildID(nextBuildID)
 }
 
-func updateLatestCompletedBuildForJob(tx Tx, jobID int) error {
+func (b *build) updateLatestCompletedBuildForJob(tx Tx) error {
 	var latestNonRerunId int
 	err := latestCompletedBuildQuery.
-		Where(sq.Eq{"job_id": jobID}).
+		Where(sq.Eq{"job_id": b.jobID}).
 		Where(sq.Eq{"rerun_of": nil}).
 		RunWith(tx).
 		QueryRow().
@@ -1591,7 +1616,7 @@ func updateLatestCompletedBuildForJob(tx Tx, jobID int) error {
 
 	var latestRerunId sql.NullString
 	err = latestCompletedBuildQuery.
-		Where(sq.Eq{"job_id": jobID}).
+		Where(sq.Eq{"job_id": b.jobID}).
 		Where(sq.Eq{"rerun_of": latestNonRerunId}).
 		RunWith(tx).
 		QueryRow().
@@ -1610,19 +1635,19 @@ func updateLatestCompletedBuildForJob(tx Tx, jobID int) error {
 		id = latestNonRerunId
 	}
 
-	_, err = tx.Exec(`
-		UPDATE jobs AS j
-		SET latest_completed_build_id = $1
-		WHERE j.id = $2
-	`, id, jobID)
+	job, found, err := b.job()
 	if err != nil {
 		return err
 	}
 
-	return nil
+	if !found {
+		return errors.New("job not found")
+	}
+
+	return job.UpdateLatestCompletedBuildID(id)
 }
 
-func updateTransitionBuildForJob(tx Tx, buildStatus BuildStatus, build *build) error {
+func (b *build) updateTransitionBuildForJob(tx Tx, buildStatus BuildStatus, build *build) error {
 	var shouldUpdateTransition bool
 
 	var latestID int
@@ -1657,16 +1682,27 @@ func updateTransitionBuildForJob(tx Tx, buildStatus BuildStatus, build *build) e
 		shouldUpdateTransition = true
 	}
 
-	if shouldUpdateTransition {
-		_, err := psql.Update("jobs").
-			Set("transition_build_id", build.id).
-			Where(sq.Eq{"id": build.jobID}).
-			RunWith(tx).
-			Exec()
-		if err != nil {
-			return err
-		}
+	job, found, err := b.job()
+	if err != nil {
+		return err
 	}
 
-	return nil
+	if !found {
+		return errors.New("job not found")
+	}
+
+	return job.UpdateTransitionBuildID(b.id)
+}
+
+func (b *build) job() (Job, bool, error) {
+	pipeline, found, err := b.Pipeline()
+	if err != nil {
+		return nil, false, err
+	}
+
+	if !found {
+		return nil, false, nil
+	}
+
+	return pipeline.Job(b.jobName)
 }

@@ -55,6 +55,9 @@ type Job interface {
 	Build(name string) (Build, bool, error)
 	FinishedAndNextBuild() (Build, Build, error)
 	UpdateFirstLoggedBuildID(newFirstLoggedBuildID int) error
+	UpdateNextBuildID(int) error
+	UpdateLatestCompletedBuildID(int) error
+	UpdateTransitionBuildID(int) error
 	EnsurePendingBuildExists() error
 	GetPendingBuilds() ([]Build, error)
 
@@ -238,6 +241,42 @@ func (j *job) UpdateFirstLoggedBuildID(newFirstLoggedBuildID int) error {
 	}
 
 	return nil
+}
+
+func (j *job) UpdateNextBuildID(buildID int) error {
+	_, err := psql.Update("jobs").
+		Set("next_build_id", buildID).
+		Where(sq.Eq{
+			"id": j.id,
+		}).
+		RunWith(j.conn).
+		Exec()
+
+	return err
+}
+
+func (j *job) UpdateLatestCompletedBuildID(buildID int) error {
+	_, err := psql.Update("jobs").
+		Set("latest_completed_build_id", buildID).
+		Where(sq.Eq{
+			"id": j.id,
+		}).
+		RunWith(j.conn).
+		Exec()
+
+	return err
+}
+
+func (j *job) UpdateTransitionBuildID(buildID int) error {
+	_, err := psql.Update("jobs").
+		Set("transition_build_id", buildID).
+		Where(sq.Eq{
+			"id": j.id,
+		}).
+		RunWith(j.conn).
+		Exec()
+
+	return err
 }
 
 func (j *job) BuildsWithTime(page Page) ([]Build, Pagination, error) {

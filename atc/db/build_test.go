@@ -377,7 +377,7 @@ var _ = Describe("Build", func() {
 			Expect(build.Status()).To(Equal(db.BuildStatusSucceeded))
 		})
 
-		Context("rerunning a build", func() {
+		FContext("rerunning a build", func() {
 			var (
 				pdBuild, pdBuild2, rrBuild db.Build
 				err                        error

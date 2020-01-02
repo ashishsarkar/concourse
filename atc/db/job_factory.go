@@ -1,6 +1,8 @@
 package db
 
 import (
+	"database/sql"
+
 	sq "github.com/Masterminds/squirrel"
 	"github.com/concourse/concourse/atc/db/lock"
 )
@@ -8,6 +10,7 @@ import (
 //go:generate counterfeiter . JobFactory
 
 type JobFactory interface {
+	Job(int) (Job, bool, error)
 	VisibleJobs([]string) (Dashboard, error)
 	AllActiveJobs() (Dashboard, error)
 	JobsToSchedule() (Jobs, error)
@@ -23,6 +26,24 @@ func NewJobFactory(conn Conn, lockFactory lock.LockFactory) JobFactory {
 		conn:        conn,
 		lockFactory: lockFactory,
 	}
+}
+
+func (j *jobFactory) Job(jobID int) (Job, bool, error) {
+	job := newEmptyJob(j.conn, j.lockFactory)
+	row := jobsQuery.
+		Where(sq.Eq{"r.id": jobID}).
+		RunWith(j.conn).
+		QueryRow()
+
+	err := scanJob(job, row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	return job, true, nil
 }
 
 func (j *jobFactory) VisibleJobs(teamNames []string) (Dashboard, error) {
